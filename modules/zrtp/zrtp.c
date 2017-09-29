@@ -38,9 +38,11 @@ struct menc_sess {
 
 struct menc_media {
 	const struct menc_sess *sess;
-	struct udp_helper *uh;
+	struct udp_helper *uh_rtp;
+	struct udp_helper *uh_rtcp;
 	struct sa raddr;
 	void *rtpsock;
+	void *rtcpsock;
 	zrtp_stream_t *zrtp_stream;
 };
 
@@ -62,6 +64,17 @@ static inline bool is_rtp_or_rtcp(const struct mbuf *mb)
 	return 127 < b && b < 192;
 }
 
+static bool is_rtcp_packet(const struct mbuf *mb)
+{
+	uint8_t pt;
+
+	if (mbuf_get_left(mb) < 2)
+		return false;
+
+	pt = mbuf_buf(mb)[1] & 0x7f;
+
+	return 64 <= pt && pt <= 95;
+}
 
 static void session_destructor(void *arg)
 {
@@ -76,8 +89,10 @@ static void media_destructor(void *arg)
 {
 	struct menc_media *st = arg;
 
-	mem_deref(st->uh);
+	mem_deref(st->uh_rtp);
+	mem_deref(st->uh_rtcp);
 	mem_deref(st->rtpsock);
+	mem_deref(st->rtcpsock);
 
 	if (st->zrtp_stream)
 		zrtp_stream_stop(st->zrtp_stream);
@@ -98,7 +113,14 @@ static bool udp_helper_send(int *err, struct sa *dst,
 	if (!is_rtp_or_rtcp(mb))
 		return false;
 
-	s = zrtp_process_rtp(st->zrtp_stream, (char *)mbuf_buf(mb), &length);
+	if (is_rtcp_packet(mb)) {
+		s = zrtp_process_rtcp(st->zrtp_stream,
+			    (char *)mbuf_buf(mb), &length);
+	}
+	else {
+		s = zrtp_process_rtp(st->zrtp_stream,
+			    (char *)mbuf_buf(mb), &length);
+	}
 	if (s != zrtp_status_ok) {
 
 		if (s == zrtp_status_drop)
@@ -132,7 +154,14 @@ static bool udp_helper_recv(struct sa *src, struct mbuf *mb, void *arg)
 
 	length = (unsigned int)mbuf_get_left(mb);
 
-	s = zrtp_process_srtp(st->zrtp_stream, (char *)mbuf_buf(mb), &length);
+	if (is_rtcp_packet(mb)) {
+		s = zrtp_process_srtcp(st->zrtp_stream,
+			    (char *)mbuf_buf(mb), &length);
+	}
+	else {
+		s = zrtp_process_srtp(st->zrtp_stream,
+			    (char *)mbuf_buf(mb), &length);
+	}
 	if (s != zrtp_status_ok) {
 
 		if (s == zrtp_status_drop)
@@ -193,7 +222,6 @@ static int media_alloc(struct menc_media **stp, struct menc_sess *sess,
 	zrtp_status_t s;
 	int layer = 10; /* above zero */
 	int err = 0;
-	(void)rtcpsock;
 
 	if (!stp || !sess || proto != IPPROTO_UDP)
 		return EINVAL;
@@ -207,10 +235,16 @@ static int media_alloc(struct menc_media **stp, struct menc_sess *sess,
 		return ENOMEM;
 
 	st->sess = sess;
-	st->rtpsock = mem_ref(rtpsock);
-
-	err = udp_register_helper(&st->uh, rtpsock, layer,
+	if (rtpsock) {
+		st->rtpsock = mem_ref(rtpsock);
+		err |= udp_register_helper(&st->uh_rtp, rtpsock, layer,
 				  udp_helper_send, udp_helper_recv, st);
+	}
+	if (rtcpsock && (rtcpsock != rtpsock)) {
+		st->rtcpsock = mem_ref(rtcpsock);
+		err |= udp_register_helper(&st->uh_rtcp, rtcpsock, layer,
+				  udp_helper_send, udp_helper_recv, st);
+	}
 	if (err)
 		goto out;
 
@@ -264,7 +298,7 @@ static int on_send_packet(const zrtp_stream_t *stream,
 	(void)mbuf_write_mem(mb, (void *)rtp_packet, rtp_packet_length);
 	mb->pos = PRESZ;
 
-	err = udp_send_helper(st->rtpsock, &st->raddr, mb, st->uh);
+	err = udp_send_helper(st->rtpsock, &st->raddr, mb, st->uh_rtp);
 	if (err) {
 		warning("zrtp: udp_send %u bytes (%m)\n",
 			rtp_packet_length, err);
