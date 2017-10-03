@@ -105,7 +105,7 @@ static bool udp_helper_send(int *err, struct sa *dst,
 	struct menc_media *st = arg;
 	unsigned int length;
 	zrtp_status_t s;
-	(void)dst;
+	const char *proto_name = "rtp";
 
 	length = (unsigned int)mbuf_get_left(mb);
 
@@ -114,6 +114,7 @@ static bool udp_helper_send(int *err, struct sa *dst,
 		return false;
 
 	if (is_rtcp_packet(mb)) {
+		proto_name = "rtcp";
 		s = zrtp_process_rtcp(st->zrtp_stream,
 			    (char *)mbuf_buf(mb), &length);
 	}
@@ -126,16 +127,16 @@ static bool udp_helper_send(int *err, struct sa *dst,
 		if (s == zrtp_status_drop)
 			return true;
 
-		warning("zrtp: send: zrtp_process_rtp failed"
+		warning("zrtp: send(port=%d): zrtp_process_%s failed"
 			" (status = %d '%s')\n",
-			s, zrtp_log_status2str(s));
+			sa_port(dst), proto_name, s, zrtp_log_status2str(s));
 		return false;
 	}
 
 	/* make sure target buffer is large enough */
 	if (length > mbuf_get_space(mb)) {
-		warning("zrtp: zrtp_process_rtp: length > space (%u > %u)\n",
-			length, mbuf_get_space(mb));
+		warning("zrtp: zrtp_process_%s: length > space (%u > %u)\n",
+			proto_name, length, mbuf_get_space(mb));
 		*err = ENOMEM;
 	}
 
@@ -150,11 +151,12 @@ static bool udp_helper_recv(struct sa *src, struct mbuf *mb, void *arg)
 	struct menc_media *st = arg;
 	unsigned int length;
 	zrtp_status_t s;
-	(void)src;
+	const char *proto_name = "srtp";
 
 	length = (unsigned int)mbuf_get_left(mb);
 
 	if (is_rtcp_packet(mb)) {
+		proto_name = "srtcp";
 		s = zrtp_process_srtcp(st->zrtp_stream,
 			    (char *)mbuf_buf(mb), &length);
 	}
@@ -167,8 +169,8 @@ static bool udp_helper_recv(struct sa *src, struct mbuf *mb, void *arg)
 		if (s == zrtp_status_drop)
 			return true;
 
-		warning("zrtp: recv: zrtp_process_srtp: %d '%s'\n",
-			s, zrtp_log_status2str(s));
+		warning("zrtp: recv(port=%d): zrtp_process_%s: %d '%s'\n",
+			sa_port(src), proto_name, s, zrtp_log_status2str(s));
 		return false;
 	}
 
