@@ -7,6 +7,7 @@
 #include <baresip.h>
 #include <zrtp.h>
 
+#include <string.h>
 
 /**
  * @defgroup zrtp zrtp
@@ -52,29 +53,41 @@ static zrtp_config_t zrtp_config;
 static zrtp_zid_t zid;
 
 
-static inline bool is_rtp_or_rtcp(const struct mbuf *mb)
-{
-	uint8_t b;
+enum pkt_type {
+	PKT_TYPE_UNKNOWN = 0,
+	PKT_TYPE_RTP = 1,
+	PKT_TYPE_RTCP = 2,
+	PKT_TYPE_ZRTP = 4
+};
 
-	if (mbuf_get_left(mb) < 1)
-		return false;
+
+static enum pkt_type get_packet_type(const struct mbuf *mb)
+{
+	uint8_t b, pt;
+	uint32_t magic;
+
+	if (mbuf_get_left(mb) < 8)
+		return PKT_TYPE_UNKNOWN;
 
 	b = mbuf_buf(mb)[0];
 
-	return 127 < b && b < 192;
+	if (127 < b && b < 192) {
+		pt = mbuf_buf(mb)[1] & 0x7f;
+		if (64 <= pt && pt <= 95)
+			return PKT_TYPE_RTCP;
+		else
+			return PKT_TYPE_RTP;
+	}
+	else {
+		memcpy(&magic, &mbuf_buf(mb)[4], 4);
+		magic = ntohl(magic);
+		if (magic == ZRTP_PACKETS_MAGIC)
+			return PKT_TYPE_ZRTP;
+	}
+
+	return PKT_TYPE_UNKNOWN;
 }
 
-static bool is_rtcp_packet(const struct mbuf *mb)
-{
-	uint8_t pt;
-
-	if (mbuf_get_left(mb) < 2)
-		return false;
-
-	pt = mbuf_buf(mb)[1] & 0x7f;
-
-	return 64 <= pt && pt <= 95;
-}
 
 static void session_destructor(void *arg)
 {
@@ -106,22 +119,23 @@ static bool udp_helper_send(int *err, struct sa *dst,
 	unsigned int length;
 	zrtp_status_t s;
 	const char *proto_name = "rtp";
+	enum pkt_type ptype = get_packet_type(mb);
 
 	length = (unsigned int)mbuf_get_left(mb);
 
-	/* only RTP packets should be processed */
-	if (!is_rtp_or_rtcp(mb))
-		return false;
-
-	if (is_rtcp_packet(mb)) {
+	/* only RTP/RTCP packets should be processed */
+	if (ptype == PKT_TYPE_RTCP) {
 		proto_name = "rtcp";
 		s = zrtp_process_rtcp(st->zrtp_stream,
 			    (char *)mbuf_buf(mb), &length);
 	}
-	else {
+	else if (ptype == PKT_TYPE_RTP) {
 		s = zrtp_process_rtp(st->zrtp_stream,
 			    (char *)mbuf_buf(mb), &length);
 	}
+	else
+		return false;
+
 	if (s != zrtp_status_ok) {
 
 		if (s == zrtp_status_drop)
@@ -152,18 +166,22 @@ static bool udp_helper_recv(struct sa *src, struct mbuf *mb, void *arg)
 	unsigned int length;
 	zrtp_status_t s;
 	const char *proto_name = "srtp";
+	enum pkt_type ptype = get_packet_type(mb);
 
 	length = (unsigned int)mbuf_get_left(mb);
 
-	if (is_rtcp_packet(mb)) {
+	if (ptype == PKT_TYPE_RTCP) {
 		proto_name = "srtcp";
 		s = zrtp_process_srtcp(st->zrtp_stream,
 			    (char *)mbuf_buf(mb), &length);
 	}
-	else {
+	else if (ptype == PKT_TYPE_RTP || ptype == PKT_TYPE_ZRTP) {
 		s = zrtp_process_srtp(st->zrtp_stream,
 			    (char *)mbuf_buf(mb), &length);
 	}
+	else
+		return false;
+
 	if (s != zrtp_status_ok) {
 
 		if (s == zrtp_status_drop)
