@@ -9,6 +9,9 @@
 #include "core.h"
 #include <ctype.h>
 
+#ifdef USE_TLS
+#include <openssl/ssl.h>
+#endif
 
 /** Magic number */
 #define MAGIC 0x0a0a0a0a
@@ -1153,6 +1156,7 @@ static int add_transp_af(const struct sa *laddr)
 		/* Build our SSL context*/
 		if (!uag.tls) {
 			const char *cert = NULL;
+			struct ssl_ctx_st *ctx;
 
 			if (str_isset(uag.cfg->cert)) {
 				cert = uag.cfg->cert;
@@ -1165,6 +1169,11 @@ static int add_transp_af(const struct sa *laddr)
 				warning("ua: tls_alloc() failed: %m\n", err);
 				return err;
 			}
+
+			ctx = tls_openssl_context(uag.tls);
+			SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+			SSL_CTX_set_verify_depth(ctx, 4);
+			tls_add_ca(uag.tls, "/tmp/ca/CAcert.pem");
 		}
 
 		if (sa_isset(&local, SA_PORT))
