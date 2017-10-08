@@ -30,6 +30,10 @@
 
 
 enum {
+	HS_TIMEOUT_MS = 15000
+};
+
+enum {
 	PRESZ = 36  /* Preamble size for TURN/STUN header */
 };
 
@@ -45,6 +49,8 @@ struct menc_media {
 	void *rtpsock;
 	void *rtcpsock;
 	zrtp_stream_t *zrtp_stream;
+	uint32_t ssrc;
+	struct tmr hs_timer;
 };
 
 
@@ -106,6 +112,7 @@ static void media_destructor(void *arg)
 	mem_deref(st->uh_rtcp);
 	mem_deref(st->rtpsock);
 	mem_deref(st->rtcpsock);
+	tmr_cancel(&st->hs_timer);
 
 	if (st->zrtp_stream)
 		zrtp_stream_stop(st->zrtp_stream);
@@ -254,6 +261,8 @@ static int media_alloc(struct menc_media **stp, struct menc_sess *sess,
 	if (!st)
 		return ENOMEM;
 
+	tmr_init(&st->hs_timer);
+
 	st->sess = sess;
 	if (rtpsock) {
 		st->rtpsock = mem_ref(rtpsock);
@@ -289,7 +298,8 @@ static int media_alloc(struct menc_media **stp, struct menc_sess *sess,
 	if (sa_isset(sdp_media_raddr(sdpm), SA_ALL)) {
 		st->raddr = *sdp_media_raddr(sdpm);
 
-		s = zrtp_stream_start(st->zrtp_stream, rtp_sess_ssrc(rtp));
+		st->ssrc = rtp_sess_ssrc(rtp);
+		s = zrtp_stream_start(st->zrtp_stream, st->ssrc);
 		if (s != zrtp_status_ok) {
 			warning("zrtp: zrtp_stream_start: status = %d\n", s);
 		}
@@ -351,6 +361,59 @@ static void on_zrtp_secure(zrtp_stream_t *stream)
 		info("zrtp: secure session with verified remote peer %w\n",
 		     sess_info.peer_zid.buffer,
 		     (size_t)sess_info.peer_zid.length);
+	}
+}
+
+
+static void hs_timer_handler(void *arg)
+{
+	struct menc_media *st = arg;
+	struct zrtp_stream_info_t si;
+	zrtp_status_t s;
+
+	zrtp_stream_get(st->zrtp_stream, &si);
+
+	warning("zrtp: timer expired, restarting stream id=%d, state=%d mode=%d\n",
+	        si.id, si.state, si.mode);
+
+	s = zrtp_stream_stop(st->zrtp_stream);
+	if (s != zrtp_status_ok) {
+		warning("zrtp: zrtp_stream_stop failed (status=%d)\n", s);
+		return;
+	}
+
+	s = zrtp_stream_attach(st->sess->zrtp_session, &st->zrtp_stream);
+	if (s != zrtp_status_ok) {
+		warning("zrtp: zrtp_stream_attach failed (status=%d)\n", s);
+		return;
+	}
+
+	zrtp_stream_set_userdata(st->zrtp_stream, st);
+
+	s = zrtp_stream_start(st->zrtp_stream, st->ssrc);
+	if (s != zrtp_status_ok) {
+		warning("zrtp: zrtp_stream_start: status = %d\n", s);
+		return;
+	}
+
+	tmr_start(&st->hs_timer, HS_TIMEOUT_MS, hs_timer_handler, st);
+}
+
+
+static void on_zrtp_protocol_event(zrtp_stream_t *stream, zrtp_protocol_event_t event)
+{
+	struct menc_media *st = zrtp_stream_get_userdata(stream);
+	struct zrtp_stream_info_t si;
+
+	zrtp_stream_get(stream, &si);
+	debug("zrtp: protocol_event  stream_id=%d  state=%d  mode=%d\n",
+	        si.id, si.state, si.mode);
+	if (event == ZRTP_EVENT_IS_INITIATINGSECURE) {
+		debug("zrtp: setting timer\n");
+		tmr_start(&st->hs_timer, HS_TIMEOUT_MS, hs_timer_handler, st);
+	}
+	else {
+		tmr_cancel(&st->hs_timer);
 	}
 }
 
@@ -439,6 +502,7 @@ static int module_init(void)
 
 	zrtp_config.cb.misc_cb.on_send_packet = on_send_packet;
 	zrtp_config.cb.event_cb.on_zrtp_secure = on_zrtp_secure;
+	zrtp_config.cb.event_cb.on_zrtp_protocol_event = on_zrtp_protocol_event;
 
 	err = conf_path_get(config_path, sizeof(config_path));
 	if (err) {
