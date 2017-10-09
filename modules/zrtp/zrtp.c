@@ -207,6 +207,7 @@ static int session_alloc(struct menc_sess **sessp, struct sdp_session *sdp,
 	(void)offerer;
 	(void)errorh;
 	(void)arg;
+	zrtp_profile_t profile;
 
 	if (!sessp || !sdp)
 		return EINVAL;
@@ -215,7 +216,10 @@ static int session_alloc(struct menc_sess **sessp, struct sdp_session *sdp,
 	if (!st)
 		return ENOMEM;
 
-	s = zrtp_session_init(zrtp_global, NULL, zid,
+	zrtp_profile_defaults(&profile, zrtp_global);
+	profile.discovery_optimization = 0;
+
+	s = zrtp_session_init(zrtp_global, &profile, zid,
 			      ZRTP_SIGNALING_ROLE_UNKNOWN, &st->zrtp_session);
 	if (s != zrtp_status_ok) {
 		warning("zrtp: zrtp_session_init failed (status = %d)\n", s);
