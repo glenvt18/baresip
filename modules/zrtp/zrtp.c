@@ -56,6 +56,9 @@ struct menc_media {
 	void *rtpsock;
 	void *rtcpsock;
 	zrtp_stream_t *zrtp_stream;
+	uint32_t ssrc;
+	struct tmr timer;
+	int counter;
 };
 
 
@@ -343,6 +346,18 @@ static int session_alloc(struct menc_sess **sessp, struct sdp_session *sdp,
 }
 
 
+static void start_stream(void *arg)
+{
+	struct menc_media *st = arg;
+	zrtp_status_t s;
+
+	s = zrtp_stream_start(st->zrtp_stream, st->ssrc);
+	if (s != zrtp_status_ok) {
+		warning("zrtp: zrtp_stream_start: status = %d\n", s);
+	}
+}
+
+
 static int media_alloc(struct menc_media **stp, struct menc_sess *sess,
 		       struct rtp_sock *rtp,
 		       int proto, void *rtpsock, void *rtcpsock,
@@ -403,10 +418,10 @@ static int media_alloc(struct menc_media **stp, struct menc_sess *sess,
 
 		sig_hash_decode(st->zrtp_stream, sdpm);
 
-		s = zrtp_stream_start(st->zrtp_stream, rtp_sess_ssrc(rtp));
-		if (s != zrtp_status_ok) {
-			warning("zrtp: zrtp_stream_start: status = %d\n", s);
-		}
+		st->ssrc = rtp_sess_ssrc(rtp);
+
+		tmr_init(&st->timer);
+		tmr_start(&st->timer, 1000, start_stream, st);
 	}
 
 	return err;
@@ -420,6 +435,9 @@ static int on_send_packet(const zrtp_stream_t *stream,
 	struct menc_media *st = zrtp_stream_get_userdata(stream);
 	struct mbuf *mb;
 	int err;
+
+	//if (st->counter++ < 15)
+		//return zrtp_status_ok;
 
 	if (drop_packets(st))
 		return zrtp_status_ok;
