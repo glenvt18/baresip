@@ -142,6 +142,8 @@ int  conf_path_get(char *path, size_t sz);
 int  conf_parse(const char *filename, confline_h *ch, void *arg);
 int  conf_get_vidsz(const struct conf *conf, const char *name,
 		    struct vidsz *sz);
+int conf_get_vidpos(const struct conf *conf, const char *name,
+		    int *pos_x, int *pos_y);
 int  conf_get_sa(const struct conf *conf, const char *name, struct sa *sa);
 bool conf_fileexist(const char *path);
 void conf_close(void);
@@ -217,6 +219,7 @@ struct config_video {
 	uint32_t bitrate;       /**< Encoder bitrate in [bit/s]     */
 	uint32_t fps;           /**< Video framerate                */
 	bool fullscreen;        /**< Enable fullscreen display      */
+	int pos_x, pos_y;
 };
 #endif
 
@@ -782,6 +785,7 @@ struct vidisp_st;
 struct vidisp_prm {
 	void *view;       /**< Optional view (set by application or module) */
 	bool fullscreen;  /**< Enable fullscreen display                    */
+	int pos_x, pos_y;
 };
 
 typedef void (vidisp_resize_h)(const struct vidsz *size, void *arg);

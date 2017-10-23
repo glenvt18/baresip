@@ -36,6 +36,7 @@
 struct vidisp_st {
 	const struct vidisp *vd;        /**< Inheritance (1st)     */
 	struct vidsz size;              /**< Current size          */
+	int pos_x, pos_y;
 
 	Display *disp;
 	Window win;
@@ -120,8 +121,27 @@ static int create_window(struct vidisp_st *st, const struct vidsz *sz)
 #ifdef DO_REDIRECT
 	XSetWindowAttributes attr;
 #endif
+
+	XWindowAttributes rattr;
+	int x = 0;
+	int y = 0;
+	int border = 1;
+	Window root = DefaultRootWindow(st->disp);
+
+	if (XGetWindowAttributes(st->disp, root, &rattr)) {
+
+		debug("== root x:%d  y:%d  w:%d  h:%d\n", rattr.x, rattr.y, rattr.width, rattr.height);
+
+		x = st->pos_x;
+		if (x < 0)
+			x = rattr.width + x - sz->w + 1 - 2 * border;
+		y = st->pos_y;
+		if (y < 0)
+			y = rattr.height + y - sz->h + 1 - 2 * border;
+	}
+
 	st->win = XCreateSimpleWindow(st->disp, DefaultRootWindow(st->disp),
-				      0, 0, sz->w, sz->h, 1, 0, 0);
+				      x, y, sz->w, sz->h, border, 0, 0);
 	if (!st->win) {
 		warning("x11: failed to create X window\n");
 		return ENOMEM;
@@ -291,6 +311,11 @@ static int alloc(struct vidisp_st **stp, const struct vidisp *vd,
 		warning("x11: could not open X display\n");
 		err = ENODEV;
 		goto out;
+	}
+
+	if (prm) {
+		st->pos_x = prm->pos_x;
+		st->pos_y = prm->pos_y;
 	}
 
 	/* Use provided view, or create our own */

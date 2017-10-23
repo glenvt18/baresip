@@ -29,6 +29,7 @@ audio_channels		1-2
 video_size		352x288
 video_bitrate		512000
 video_fps		25
+#video_position		-1,40  # video window screen position
 
 # AVT - Audio/Video Transport
 rtp_tos			184

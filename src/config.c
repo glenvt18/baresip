@@ -67,6 +67,8 @@ static struct config core_config = {
 		500000,
 		25,
 		true,
+		0,
+		0,
 	},
 #endif
 
@@ -219,6 +221,8 @@ int config_parse_conf(struct config *cfg, const struct conf *conf)
 	(void)conf_get_u32(conf, "video_bitrate", &cfg->video.bitrate);
 	(void)conf_get_u32(conf, "video_fps", &cfg->video.fps);
 	(void)conf_get_bool(conf, "video_fullscreen", &cfg->video.fullscreen);
+	(void)conf_get_vidpos(conf, "video_position",
+			      &cfg->video.pos_x, &cfg->video.pos_y);
 #else
 	(void)size;
 #endif
@@ -479,6 +483,7 @@ static int core_config_template(struct re_printf *pf, const struct config *cfg)
 			  "video_bitrate\t\t%u\n"
 			  "video_fps\t\t%u\n"
 			  "video_fullscreen\t\tyes\n",
+			  "#video_position\t\t-1,40  # video window screen position\n",
 			  default_video_device(),
 			  default_video_display(),
 			  cfg->video.width, cfg->video.height,

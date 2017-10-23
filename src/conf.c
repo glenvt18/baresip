@@ -273,6 +273,34 @@ int conf_get_vidsz(const struct conf *conf, const char *name, struct vidsz *sz)
 }
 
 
+int conf_get_vidpos(const struct conf *conf, const char *name,
+		    int *pos_x, int *pos_y)
+{
+	struct pl r, x, y, sx, sy;
+	int err;
+
+	err = conf_get(conf, name, &r);
+	if (err)
+		return err;
+
+	x.l = y.l = sx.l = sy.l = 0;
+	err = re_regex(r.p, r.l, "[-]*[0-9]+,[-]*[0-9]+", &sx, &x, &sy, &y);
+	if (err)
+		return err;
+
+	if (pl_isset(&x) && pl_isset(&y)) {
+		*pos_x = pl_u32(&x);
+		*pos_y = pl_u32(&y);
+		if (pl_isset(&sx))
+			*pos_x = - *pos_x;
+		if (pl_isset(&sy))
+			*pos_y = - *pos_y;
+	}
+
+	return 0;
+}
+
+
 int conf_get_sa(const struct conf *conf, const char *name, struct sa *sa)
 {
 	struct pl opt;
